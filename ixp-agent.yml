@@ -1,0 +1,22 @@
+# See example_config.yml for an explanation of all the accepted fields
+ixp_agent:
+   path: /opt/demo-agents/ixp-agent
+   launch-command: /opt/demo-agents/ixp-agent/ixp-agent.sh
+   search-command: python3 /opt/demo-agents/ixp-agent/ixp-agent.py
+   wait-for-config: Yes
+   failure-threshold: 100
+   failure-action: wait=forever
+   author: 'Nokia'
+   version-command: ' echo "1.0.1"'
+   yang-modules:
+    names:
+    - "ixp-agent"
+    source-directories:
+    - "/opt/demo-agents/ixp-agent/"
+    - "/opt/srlinux/models/srl_nokia/models/common/"
+    - "/opt/srlinux/models/srl_nokia/models/qos/"
+    - "/opt/srlinux/models/srl_nokia/models/acl/"
+    - "/opt/srlinux/models/srl_nokia/models/routing-policy/"
+    - "/opt/srlinux/models/srl_nokia/models/system/"
+    - "/opt/srlinux/models/srl_nokia/models/network-instance/"
+    - "/opt/srlinux/models/srl_nokia/models/interfaces/"

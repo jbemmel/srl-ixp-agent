@@ -1,0 +1,112 @@
+module ixp-agent {
+
+    yang-version "1";
+
+    namespace "urn:srl_extension/ixp-agent";
+
+    prefix "bgp_acl_agent";
+
+    import srl_nokia-acl {
+        prefix _acl;
+    }
+    import srl_nokia-extensions {
+      prefix srl_nokia-ext;
+    }
+    import srl_nokia-common {
+      prefix srl_nokia-comm;
+    }
+    import srl_nokia-network-instance {
+        prefix srl_nokia-netinst;
+    }
+    import srl_nokia-bgp {
+        prefix srl_nokia-bgp;
+    }
+
+    // organization "Nokia";
+
+    revision "2021-06-28" {
+        description "Initial revision";
+        reference "TBD";
+    }
+
+    grouping ixp-agent-top {
+        description "Top level grouping for IXP agent sample app";
+
+        container ixp-agent {
+            presence "presence container";
+            description "Top level enclosing container for IXP agent app
+                         config and global operational state data";
+
+            must "/system/gnmi-server/unix-socket/admin-state = 'enable'" {
+              error-message "This agent requires the gNMI Unix socket to be enabled";
+            }
+
+            leaf acl-sequence-start {
+                description "Initial sequence number to use for generated ACL entries";
+                type uint16;
+                default 1000;
+            }
+
+            leaf IXP {
+                description "Name of the IXP site to use for querying peeringDB";
+                type string;
+                mandatory "true";
+            }
+
+            leaf-list peer-as {
+                description "List of AS numbers to peer with at this IXP site";
+                type uint32;
+            }
+
+            leaf peer-count {
+                config false;
+                description "Total number of BGP peers configured by this agent";
+                type uint32;
+                default 0;
+            }
+
+            leaf acl-count {
+                config false;
+                description "Total number of ACL entries created (ipv4/ipv6)";
+                type uint32;
+                default 0;
+            }
+
+            leaf last-change {
+                config false;
+                description "Date and time of last update (add/delete)";
+                type srl_nokia-comm:date-and-time-delta;
+            }
+        }
+    }
+
+    // data definition statements
+    // uses ixp-agent-top;
+    // Depends on 'bgp' tree being present in the config
+    augment "/srl_nokia-netinst:network-instance/srl_nokia-netinst:protocols/srl_nokia-bgp:bgp" {
+        uses ixp-agent-top;
+    }
+
+    // Add a flag to ACL entries such that we can easily track the ones we added
+    grouping custom-agent-config {
+
+     // Add a flag that is visible in the CLI, such that users can see
+     leaf created-by-ixp-agent {
+        description "Timestamp added by IXP agent to mark this entry";
+        type string; // no point to make this srl_nokia-comm:date-and-time-delta;
+
+        must "(../match/protocol = 'tcp' or ../match/next-header = 'tcp') and (../match/destination-port/value = 179 or ../match/source-port/value = 179)" {
+          error-message "The IXP agent only manages TCP entries for port 179";
+        }
+     }
+    }
+
+    // Add custom state to ipv4 and ipv6 ACL entries
+    augment "/_acl:acl/_acl:cpm-filter/_acl:ipv4-filter/_acl:entry" {
+      uses custom-agent-config;
+    }
+    augment "/_acl:acl/_acl:cpm-filter/_acl:ipv6-filter/_acl:entry" {
+      uses custom-agent-config;
+    }
+
+}
