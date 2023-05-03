@@ -28,7 +28,7 @@ from logging.handlers import RotatingFileHandler
 
 # PeeringDB integration
 import typing, requests
-from urllib.parse import quote
+# from urllib.parse import quote
 
 ############################################################
 ## Agent will start with this name
@@ -84,7 +84,7 @@ def Subscribe_Notifications(stream_id):
 Lookup ASN in PeeringDB and return ipv4,ipv6 peering IPs at given IX
 """
 def query_peeringdb(asn: int, ix: str) -> typing.Tuple[typing.Optional[str],typing.Optional[str],typing.Optional[str]]:
-  url = f"https://peeringdb.com/api/netixlan?asn={asn}&name__contains={quote(ix)}"
+  url = f"https://peeringdb.com/api/netixlan?asn={asn}&name__contains={ix.replace(' ','%20')}"
   print( f"PeeringDB query: {url}" )
   resp = requests.get(url=url)
   pdb_json = json.loads(resp.text)

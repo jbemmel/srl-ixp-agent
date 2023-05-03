@@ -25,6 +25,9 @@ COPY Pipfile ${AGENT_DIR}
 RUN cd ${AGENT_DIR} && \
     sudo PIPENV_VENV_IN_PROJECT=1 /usr/local/bin/pipenv install --deploy --site-packages
 
+# Install urllib inside venv, else issue with six package not being found
+# RUN source /opt/demo-agents/ixp-agent/.venv/bin/activate && pip install requests urllib3 six certifi --upgrade
+
 FROM base AS runtime
 
 # Copy virtual env from agent-deps stage
