@@ -101,6 +101,90 @@ def query_peeringdb(asn: int, ix: str) -> typing.Tuple[typing.Optional[str],typi
     return ( site['name'], site['ipaddr4'], site['ipaddr6'] )
   return ( None, None, None )
 
+def get_prefixlist(asn: int):
+  """
+  Retrieve list of prefixes registered in IRR for the given AS
+  """
+  with netns.NetNS(nsname="srbase-mgmt"):
+    url = f"https://irrexplorer.nlnog.net/api/prefixes/asn/AS{asn}"
+    logging.info( f"irrexplorer query: {url}" )
+    resp = requests.get(url=url)
+
+  pfl_json = json.loads(resp.text)
+  # Could use bgpOrigins (AS list) too
+  return [ i["prefix"] for i in pfl_json["overlaps"] if i["goodnessOverall"]==1 ]
+
+def ConfigureBGPPeering():
+    PATH = '/network-instance[name=default]/protocols/bgp'
+    with gNMIclient(target=('unix:///opt/srlinux/var/run/sr_gnmi_server',57400),
+                            username="admin",password="NokiaSrl1!",
+                            insecure=True, debug=False) as gnmi:
+
+     def addPeer(_as,name,ip,af,pfx):
+      group_name = f"ix-{af}"
+      policy_name = f"ix-import-{_as}-{af}"
+      updates = [ (f"/routing-policy/policy[name={policy_name}]",
+       {
+        "default-action": {
+          "policy-result": "reject"
+        },
+        "statement": [
+        {
+          "name": "irr",
+          "match": {
+            "prefix-set": f"as{_as}-{af}"
+          },
+          "action": {
+            "policy-result": "accept"
+          }
+        }
+        ]
+       }
+       ) ]
+      prefixes = []
+      for p in pfx:
+       if ((af=='ipv4' and '.' in p) or (af=='ipv6' and ':' in p)):
+        prefixes.append( { "ip-prefix": p, "mask-length-range": "exact" } )
+      updates.append( (f'/routing-policy/prefix-set[name=as{_as}-{af}]', {"prefix": prefixes}) )
+
+      updates.append( (PATH+f'/group[group-name={group_name}]',
+       {
+        "admin-state": "enable",
+        "description": name, # from PeeringDB
+        "afi-safi": [
+          {
+            "afi-safi-name": "ipv4-unicast",
+            "admin-state": "disable" if af=="ipv6" else "enable"
+          },
+          {
+            "afi-safi-name": "ipv6-unicast",
+            "admin-state": "disable" if af=="ipv4" else "enable"
+          }
+         ]
+       })
+      )
+      updates.append( (PATH+f'/neighbor[peer-address={ip}]',
+       {
+          "peer-as": _as,
+          "peer-group": group_name,
+          "import-policy": policy_name
+
+          # Could query https://www.peeringdb.com/api/net?asn=x and set max-prefixes
+       })
+      )
+      gnmi.set( encoding='json_ietf', update=updates )
+
+     for peer in peer_as_list:
+      (name,ip4,ip6) = query_peeringdb( peer, ixp )
+      logging.info( f"PeeringDB result: {name} {ip4} {ip6}" )
+      if ip4 or ip6:
+       pfx = get_prefixlist(peer)
+       logging.info( f"Prefix count: {len(pfx)}" )
+       if ip4:
+        addPeer(peer,name,ip4,"ipv4",pfx)
+       if ip6:
+        addPeer(peer,name,ip6,"ipv6",pfx)
+
 ##################################################################
 ## Proc to process the config Notifications received by auto_config_agent
 ## At present processing config from js_path = .fib-agent
@@ -133,9 +217,11 @@ def Handle_Notification(obj):
                     global peer_as_list
                     peer_as_list = [ int(e['value']) for e in data['peer_as'] ]
 
-                for peer in peer_as_list:
-                  (name,ip4,ip6) = query_peeringdb( peer, ixp )
-                  logging.info( f"Result: {name,ip4,ip6}" )
+                try:
+                  ConfigureBGPPeering()
+                except Exception as e:
+                  logging.error(e)
+                  sys.exit(1)
                 return True
 
     else:
@@ -369,6 +455,10 @@ def Find_ACL_entry(gnmi,ip_prefix):
 ##################################################################################################
 def Run():
     sub_stub = sdk_service_pb2_grpc.SdkNotificationServiceStub(channel)
+
+    # On startup, wait a few seconds before registering to make sure DNS/BGP config is in place
+    logging.info("Waiting 30s to let DNS/BGP config settle in...")
+    time.sleep(30)
 
     response = stub.AgentRegister(request=sdk_service_pb2.AgentRegistrationRequest(), metadata=metadata)
     logging.info(f"Registration response : {response.status}")
