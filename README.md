@@ -10,3 +10,9 @@ In addition, the agent will query https://irrexplorer.nlnog.net/api/prefixes/asn
 and it provisions a filter policy to accept only those prefixes
 
 Demo topology: https://github.com/jbemmel/netsim-examples/tree/master/BGP/IXP-Peering
+
+## Build instructions
+
+```
+make rpm
+```
