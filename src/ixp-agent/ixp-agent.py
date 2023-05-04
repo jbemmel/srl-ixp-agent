@@ -12,6 +12,7 @@ import json
 import signal
 import traceback
 import re
+import time
 # from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 
@@ -27,7 +28,7 @@ from pygnmi.client import gNMIclient, telemetryParser
 from logging.handlers import RotatingFileHandler
 
 # PeeringDB integration
-import typing, requests
+import typing, requests, netns
 # from urllib.parse import quote
 
 ############################################################
@@ -39,6 +40,7 @@ acl_sequence_start=1000 # Default ACL sequence number base, can be configured
 acl_count=0             # Number of ACL entries created/managed
 
 ixp = ""                # IXP site, e.g. "DE-CIX Frankfurt"
+peer_as_list = []       # List of AS to peer with
 
 ############################################################
 ## Open a GRPC channel to connect to sdk_mgr on the dut
@@ -84,9 +86,14 @@ def Subscribe_Notifications(stream_id):
 Lookup ASN in PeeringDB and return ipv4,ipv6 peering IPs at given IX
 """
 def query_peeringdb(asn: int, ix: str) -> typing.Tuple[typing.Optional[str],typing.Optional[str],typing.Optional[str]]:
-  url = f"https://peeringdb.com/api/netixlan?asn={asn}&name__contains={ix.replace(' ','%20')}"
-  print( f"PeeringDB query: {url}" )
-  resp = requests.get(url=url)
+  while not os.path.exists('/var/run/netns/srbase-mgmt'):
+    logging.info("Waiting for srbase-default netns to be created...")
+    time.sleep(2) # 1 second is not enough
+
+  with netns.NetNS(nsname="srbase-mgmt"):
+    url = f"https://peeringdb.com/api/netixlan?asn={asn}&name__contains={ix.replace(' ','%20')}"
+    logging.info( f"PeeringDB query: {url}" )
+    resp = requests.get(url=url)
   pdb_json = json.loads(resp.text)
   print( pdb_json )
   if 'data' in pdb_json and pdb_json['data']:
@@ -123,8 +130,12 @@ def Handle_Notification(obj):
                     ixp = data['IXP']['value']
                 if 'peer_as' in data:
                     logging.info(f"Peer AS list : {data['peer_as']}")
-                (name,ip4,ip6) = query_peeringdb( 1234, ixp )
-                logging.info( f"Result: {name,ip4,ip6}" )
+                    global peer_as_list
+                    peer_as_list = [ int(e['value']) for e in data['peer_as'] ]
+
+                for peer in peer_as_list:
+                  (name,ip4,ip6) = query_peeringdb( peer, ixp )
+                  logging.info( f"Result: {name,ip4,ip6}" )
                 return True
 
     else:
@@ -164,46 +175,53 @@ def Gnmi_subscribe_bgp_changes():
     _bgp = re.compile( r'^network-instance\[name=([^]]*)\]/protocols/bgp/neighbor\[peer-address=([^]]*)\]/.*$' )
     _dyn = re.compile( r'^network-instance\[name=([^]]*)\]/protocols/bgp/dynamic-neighbors/accept/match\[prefix=([^]]*)\]/.*$' )
 
-    # with Namespace('/var/run/netns/srbase-mgmt', 'net'):
-    with gNMIclient(target=('unix:///opt/srlinux/var/run/sr_gnmi_server',57400),
-                            username="admin",password="admin",
-                            insecure=True, debug=False) as c:
-      telemetry_stream = c.subscribe(subscribe=subscribe)
-      logging.info( "Unix socket connected...waiting for subscribed gNMI events" )
-      for m in telemetry_stream:
-        try:
-          if m.HasField('update'): # both update and delete events
-              # Filter out only toplevel events
-              parsed = telemetryParser(m)
-              logging.info(f"gNMI change event :: {parsed}")
-              update = parsed['update']
-              if update['update']:
-                 path = update['update'][0]['path']  # Only look at top level
-                 neighbor = _bgp.match( path )
-                 if neighbor:
-                    net_inst = neighbor.groups()[0]
-                    ip_prefix = neighbor.groups()[1] # plain ip
-                    peer_type = "static"
-                    logging.info(f"Got neighbor change event :: {ip_prefix}")
-                 else:
-                    dyn_group = _dyn.match( path )
-                    if dyn_group:
-                       net_inst = dyn_group.groups()[0]
-                       ip_prefix = dyn_group.groups()[1] # ip/prefix
-                       peer_type = "dynamic"
-                       logging.info(f"Got dynamic-neighbor change event :: {ip_prefix}")
-                    else:
-                      logging.info(f"Ignoring gNMI change event :: {path}")
-                      continue
+    connected = False
+    while not connected:
+      try:
+        # with Namespace('/var/run/netns/srbase-mgmt', 'net'):
+        with gNMIclient(target=('unix:///opt/srlinux/var/run/sr_gnmi_server',57400),
+                                username="admin",password="NokiaSrl1!",
+                                insecure=True, debug=False) as c:
+          connected = True
+          telemetry_stream = c.subscribe(subscribe=subscribe)
+          logging.info( "Unix socket connected...waiting for subscribed gNMI events" )
+          for m in telemetry_stream:
+            try:
+              if m.HasField('update'): # both update and delete events
+                  # Filter out only toplevel events
+                  parsed = telemetryParser(m)
+                  logging.info(f"gNMI change event :: {parsed}")
+                  update = parsed['update']
+                  if update['update']:
+                     path = update['update'][0]['path']  # Only look at top level
+                     neighbor = _bgp.match( path )
+                     if neighbor:
+                        net_inst = neighbor.groups()[0]
+                        ip_prefix = neighbor.groups()[1] # plain ip
+                        peer_type = "static"
+                        logging.info(f"Got neighbor change event :: {ip_prefix}")
+                     else:
+                        dyn_group = _dyn.match( path )
+                        if dyn_group:
+                           net_inst = dyn_group.groups()[0]
+                           ip_prefix = dyn_group.groups()[1] # ip/prefix
+                           peer_type = "dynamic"
+                           logging.info(f"Got dynamic-neighbor change event :: {ip_prefix}")
+                        else:
+                          logging.info(f"Ignoring gNMI change event :: {path}")
+                          continue
 
-                 # No-op if already exists
-                 Add_ACL(c,ip_prefix.split('/'),net_inst,peer_type)
-              else: # pygnmi does not provide 'path' for delete events
-                 handleDelete(c,m)
+                     # No-op if already exists
+                     Add_ACL(c,ip_prefix.split('/'),net_inst,peer_type)
+                  else: # pygnmi does not provide 'path' for delete events
+                     handleDelete(c,m)
 
-        except Exception as e:
-          traceback_str = ''.join(traceback.format_tb(e.__traceback__))
-          logging.error(f'Exception caught in gNMI :: {e} m={m} stack:{traceback_str}')
+            except Exception as e:
+              traceback_str = ''.join(traceback.format_tb(e.__traceback__))
+              logging.error(f'Exception caught in gNMI :: {e} m={m} stack:{traceback_str}')
+      except grpc.FutureTimeoutError as e:
+        logging.error( e )
+        time.sleep( 5 )
     logging.info("Leaving BGP event loop")
 
 def handleDelete(gnmi,m):
@@ -245,7 +263,7 @@ def Update_ACL_Counter(delta):
     global acl_count
     acl_count += delta
     _ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    Add_Telemetry( ".bgp_acl_agent", { "acl_count"   : acl_count,
+    Add_Telemetry( ".ixp_agent", { "acl_count"   : acl_count,
                                        "last_change" : _ts } )
 
 def Add_ACL(gnmi,ip_prefix,net_inst,peer_type):
@@ -263,7 +281,7 @@ def Add_ACL(gnmi,ip_prefix,net_inst,peer_type):
            },
            "action": { "accept": { } },
           }
-          path = f'/acl/cpm-filter/ipv{v}-filter/entry[name={next_seq+i}]'
+          path = f'/acl/cpm-filter/ipv{v}-filter/entry[sequence-id={next_seq+i}]'
           logging.info(f"Update: {path}={acl_entry}")
           updates.append( (path,acl_entry) )
         gnmi.set( encoding='json_ietf', update=updates )
@@ -280,7 +298,7 @@ def Remove_ACL(gnmi,peer_ip):
    seq, next_seq, v, ip, prefix = Find_ACL_entry(gnmi,[peer_ip])
    if seq is not None:
        logging.info(f"Remove_ACL: Deleting ACL entry :: {seq}")
-       path = f'/acl/cpm-filter/ipv{v}-filter/entry[name={seq}]'
+       path = f'/acl/cpm-filter/ipv{v}-filter/entry[sequence-id={seq}]'
        gnmi.set( encoding='json_ietf', delete=[path] )
        Update_ACL_Counter( -1 )
    else:
@@ -332,14 +350,12 @@ def Find_ACL_entry(gnmi,ip_prefix):
                        if (key_name in match
                             and 'value' in match[key_name]
                             and match[key_name]['value'] == 179):
-                           return (int(j['name']),None,v,ip,prefix)
+                           return (j['sequence-id'],None,v,ip,prefix)
                        else:
                            logging.info( "Source/Dest IP match but not BGP port" )
-                     if int(j['name'])==next_seq:
+                     if j['sequence-id']==next_seq:
                        logging.info( f"Increment next_seq (={next_seq})" )
                        next_seq += 1
-                else:
-                  logging.info( "No 'source-ip' in entry" )
      except Exception as e:
         logging.error(f'Exception caught in Find_ACL_entry :: {e}')
    logging.info(f"Find_ACL_entry: no match for searched={searched} next_seq={next_seq}")
@@ -367,10 +383,8 @@ def Run():
     stream_request = sdk_service_pb2.NotificationStreamRequest(stream_id=stream_id)
     stream_response = sub_stub.NotificationStream(stream_request, metadata=metadata)
 
-    # Gnmi_subscribe_bgp_changes()
-    # executor = ThreadPoolExecutor(max_workers=1)
-    # executor.submit(Gnmi_subscribe_bgp_changes)
-    Thread( target=Gnmi_subscribe_bgp_changes ).start()
+    # Pause for now
+    # Thread( target=Gnmi_subscribe_bgp_changes ).start()
 
     try:
         for r in stream_response:

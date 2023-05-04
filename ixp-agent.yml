@@ -1,10 +1,11 @@
 # See example_config.yml for an explanation of all the accepted fields
 ixp_agent:
    path: /opt/demo-agents/ixp-agent
-   launch-command: /opt/demo-agents/ixp-agent/ixp-agent.sh
+   # sudo for NetNS access
+   launch-command: sudo /opt/demo-agents/ixp-agent/ixp-agent.sh
    search-command: python3 /opt/demo-agents/ixp-agent/ixp-agent.py
    wait-for-config: Yes
-   failure-threshold: 100
+   failure-threshold: 3
    failure-action: wait=forever
    author: 'Nokia'
    version-command: ' echo "1.0.1"'

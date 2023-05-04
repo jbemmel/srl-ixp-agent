@@ -46,7 +46,7 @@ COPY src /opt/demo-agents
 
 # run pylint to catch any obvious errors (includes .venv?)
 # RUN sudo yum install -y pylint && pip install pylint-protobuf
-RUN PYTHONPATH=${AGENT_DIR}.venv/lib/python3.6/site-packages/:$AGENT_PYTHONPATH pylint --load-plugins=pylint_protobuf -E ${AGENT_DIR}
+# RUN PYTHONPATH=${AGENT_DIR}.venv/lib/python3.6/site-packages/:$AGENT_PYTHONPATH pylint --load-plugins=pylint_protobuf -E ${AGENT_DIR}
 
 # Using a build arg to set the release tag, set a default for running docker build manually
 ARG SRL_IXP_RELEASE="[custom build]"

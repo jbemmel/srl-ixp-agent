@@ -24,7 +24,7 @@ module ixp-agent {
 
     // organization "Nokia";
 
-    revision "2021-06-28" {
+    revision "2023-05-03" {
         description "Initial revision";
         reference "TBD";
     }
@@ -82,8 +82,9 @@ module ixp-agent {
 
     // data definition statements
     // uses ixp-agent-top;
-    // Depends on 'bgp' tree being present in the config
-    augment "/srl_nokia-netinst:network-instance/srl_nokia-netinst:protocols/srl_nokia-bgp:bgp" {
+    // Don't make this depend on 'bgp' tree being present in the config
+    // Doesn't work - no events received
+    augment "/srl_nokia-netinst:network-instance" {
         uses ixp-agent-top;
     }
 
@@ -109,4 +110,6 @@ module ixp-agent {
       uses custom-agent-config;
     }
 
+    // Test: Put also at global level -> config events start working
+    uses ixp-agent-top;
 }

@@ -25,6 +25,7 @@ function main()
     source "${virtual_env}"
 
     # Include local paths where custom packages are installed
+    # VENV_LIB="/opt/demo-agents/ixp-agent/.venv/lib/python3.8/site-packages"
     VENV_LIB="/opt/demo-agents/ixp-agent/.venv/lib/python3.6/site-packages"
     # P2="/usr/local/lib64/python3.6/site-packages"
     # NDK="/opt/rh/rh-python36/root/usr/lib/python3.6/site-packages/sdk_protos"
@@ -32,7 +33,7 @@ function main()
     NDK="/usr/lib/python3.6/site-packages/sdk_protos"
     export PYTHONPATH="$NDK:$VENV_LIB:$PYTHONPATH"
 
-    # [[ ! -f /var/run/netns/srbase-mgmt ]] && sleep 10
+    # while [[ ! -f /var/run/netns/srbase-mgmt ]]; do sleep 1; done
     # /usr/sbin/ip netns exec srbase-mgmt python3 ${main_module} &
     # Now using Unix socket to connect locally
     python3 ${main_module} &
